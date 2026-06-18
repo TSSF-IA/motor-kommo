@@ -10,24 +10,24 @@ FIELD_VEHICULO_ID = 1386855
 
 @app.route('/webhook', methods=['POST'])
 def procesar_lead():
+    # REPORTE INMEDIATO EN LA CONSOLA DE RENDER
+    print("¡ALERTA!: Ha llegado un disparo desde Kommo a Render")
+    
     try:
         lead_id = None
         
-        # 1. DETECTAR EL FORMATO AUTOMÁTICAMENTE
+        # Lectura universal forzada
         if request.is_json:
-            # Si viene de Salesbot (JSON)
             json_data = request.get_json()
-            # Buscar ID en las rutas típicas de JSON de Kommo
+            print(f"Formato detectado: JSON. Contenido: {json_data}")
             if 'leads' in json_data:
                 if isinstance(json_data['leads'], list) and len(json_data['leads']) > 0:
                     lead_id = json_data['leads'][0].get('id')
-                elif isinstance(json_data['leads'], dict):
-                    lead_id = json_data['leads'].get('id') or json_data['leads'].get('update', [{}])[0].get('id')
             if not lead_id:
                 lead_id = json_data.get('lead_id') or json_data.get('id')
         else:
-            # Si viene de Webhook Directo (Formulario)
             form_data = request.form
+            print(f"Formato detectado: Formulario. Contenido: {dict(form_data)}")
             for key in form_data.keys():
                 if 'leads' in key and '[id]' in key:
                     lead_id = form_data[key]
@@ -35,17 +35,14 @@ def procesar_lead():
             if not lead_id:
                 lead_id = form_data.get('lead_id') or form_data.get('id')
 
-        # Si no hay ID, registramos qué tipo de datos llegaron para auditar
         if not lead_id:
-            print(f"Aviso recibido pero sin ID. Datos: {request.get_data(as_text=True)}")
-            return jsonify({"status": "ignorado", "error": "No se detectó ID"}), 200
+            print("ERROR: Se recibió el webhook pero no se pudo extraer el ID del lead.")
+            return jsonify({"status": "error", "detalle": "No se detectó ID"}), 200
 
-        print(f"¡ID Detectado con éxito!: {lead_id}")
-
-        # 2. REGLA DE UNIFICACIÓN
+        # Lógica de unificación provisional para testear la escritura
         vehiculo_final = "Particular Hasta 800 kg. de peso"
 
-        # 3. ENVIAR ACTUALIZACIÓN A KOMMO
+        # Ejecutar la actualización en Kommo
         url = f"https://{KOMMO_DOMAIN}/api/v4/leads/{lead_id}"
         headers = {
             "Authorization": f"Bearer {KOMMO_TOKEN}",
@@ -61,7 +58,7 @@ def procesar_lead():
         }
 
         response = requests.patch(url, json=payload, headers=headers)
-        print(f"Lead {lead_id} procesado. Código de respuesta de Kommo: {response.status_code}")
+        print(f"Intento de actualización del Lead {lead_id}. Código de respuesta de Kommo: {response.status_code}")
         
         return jsonify({"status": "exito", "lead_id": lead_id}), 200
 

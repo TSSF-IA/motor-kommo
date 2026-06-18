@@ -10,41 +10,45 @@ FIELD_VEHICULO_ID = 1386855
 
 @app.route('/webhook', methods=['POST'])
 def procesar_lead():
-    print("¡ALERTA MÁXIMA!: Entró un disparo a Render", flush=True)
+    print("¡ALERTA!: Llegó una petición desde el Salesbot", flush=True)
     
     try:
         lead_id = None
         
-        # Procesar datos si vienen como formulario (Webhook directo)
-        if request.form:
+        # El Salesbot envía siempre JSON nativo
+        if request.is_json:
+            json_data = request.get_json()
+            print(f"Estructura JSON del Salesbot: {json_data}", flush=True)
+            
+            # Extracción del ID del lead en la carga útil de Kommo
+            if 'leads' in json_data:
+                if 'update' in json_data['leads']:
+                    lead_id = json_data['leads']['update'][0].get('id')
+                elif 'add' in json_data['leads']:
+                    lead_id = json_data['leads']['add'][0].get('id')
+            
+            if not lead_id:
+                # Intentar extracción directa si se envía simplificado
+                lead_id = json_data.get('id') or json_data.get('lead_id')
+        
+        else:
+            # Respaldo por si se usa formulario tradicional
             form_data = request.form
-            print(f"Datos de Formulario recibidos: {dict(form_data)}", flush=True)
             for key in form_data.keys():
                 if 'leads' in key and '[id]' in key:
                     lead_id = form_data[key]
                     break
-        
-        # Procesar datos si vienen como JSON (Salesbot)
-        elif request.is_json:
-            json_data = request.get_json()
-            print(f"Datos JSON recibidos: {json_data}", flush=True)
-            if 'leads' in json_data:
-                if isinstance(json_data['leads'], list) and len(json_data['leads']) > 0:
-                    lead_id = json_data['leads'][0].get('id')
-            if not lead_id:
-                lead_id = json_data.get('lead_id') or json_data.get('id')
 
-        # Respuesta segura 200 para que Kommo jamás desactive el Webhook
         if not lead_id:
-            print("Aviso: Petición sin ID detectado (posible test de ReqBin).", flush=True)
-            return jsonify({"status": "recibido", "nota": "Sin ID detectado"}), 200
+            print("Aviso: No se pudo extraer un ID de lead válido del JSON recibido.", flush=True)
+            return jsonify({"status": "recibido", "nota": "Estructura no contiene lead ID válido"}), 200
 
-        print(f"¡ID de Lead localizado!: {lead_id}", flush=True)
+        print(f"¡ID de Lead localizado en Salesbot!: {lead_id}", flush=True)
 
-        # Regla de unificación provisional
+        # Regla de unificación fija provisional para validar la escritura
         vehiculo_final = "Particular Hasta 800 kg. de peso"
 
-        # Conexión directa a la API de Kommo
+        # Conexión directa con la API de Kommo
         url = f"https://{KOMMO_DOMAIN}/api/v4/leads/{lead_id}"
         headers = {
             "Authorization": f"Bearer {KOMMO_TOKEN}",
@@ -60,12 +64,12 @@ def procesar_lead():
         }
 
         response = requests.patch(url, json=payload, headers=headers)
-        print(f"Resultado en Kommo para Lead {lead_id}: Código {response.status_code}", flush=True)
+        print(f"Resultado de actualización en Kommo para Lead {lead_id}: Código {response.status_code}", flush=True)
         
         return jsonify({"status": "exito", "lead_id": lead_id}), 200
 
     except Exception as e:
-        print(f"Error crítico interno: {e}", flush=True)
+        print(f"Error crítico en el proceso del bot: {e}", flush=True)
         return jsonify({"status": "error", "detalle": str(e)}), 500
 
 if __name__ == '__main__':

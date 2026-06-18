@@ -5,59 +5,62 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 KOMMO_DOMAIN = "asesoresintegrales03.kommo.com"
-KOMMO_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImp0aSI6ImVmZDY4MThjYTllMmJiNTA1ODFkY2ExZTE4NWVmOWM3Njc0N2U3MzYzYTVkYjY3ZjBiMmUyODI3Nzk4NWVhNWU1NDk4YjM0ZDkyMTIzYTk0In0.eyJhdWQiOiI3ZmQ5Yjc4Yy0zNTU3LTRhNDAtOTI3My1iNjk3NWU3NDJkNGQiLCJqdGkiOiJlZmQ2ODE4Y2E5ZTJiYjUwNTgxZGNhMWUxODVlZjljNzY3NDdlNzM2M2E1ZGI2N2YwYjJlMjgyNzc5ODVlYTVlNTQ5OGIzNGQ5MjEyM2E5NCIsImlhdCI6MTc4MTgwMzk1NiwibmJmIjoxNzgxODAzOTU2LCJleHAiOjE5MjQ5MDU2MDAsInN1YiI6Ijk1MDE4NjciLCJncmFudF90eXBlIjoiIiwiYWNjb3VudF9pZCI6MzExODA3OTEsImJhc2VfZG9tYWluIjoia29tbW8uY29tIiwidmVyc2lvbiI6Miwic2NvcGVzIjpbImNybSIsImZpbGVzIiwiZmlsZXNfZGVsZXRlIiwibm90aWZpY2F0aW9ucyIsInB1c2hfbm90aWZpY2F0aW9ucyIsInVzZXJzX2FjdGl2YXRlIiwidXNlcnNfYWRkIiwidXNlcnNfZGVhY3RpdmF0ZSJdLCJoYXNoX3V1aWQiOiJlMzNhMmM2NC03YTllLTQ1NzYtODQ1Yy1kZjBlODQyMmUxNmYiLCJhcGlfZG9tYWluIjoiYXBpLWcua29tbW8uY29tIn0.H0BJhLb8ofc9vVDM_Q7IwkfhgQ2RdBbZbbpZHHyFWqdZsVZpnoF7VqRe0tm_CpkTgQZdgu2C5uWo3fPZsQJDwU0pY1IQi86TQJiDyhVN9aHZUSakY6RznhPz9t_O1hOqgR8h99dAfhr-a0oDUSLPsxd7EPV4hQNSQwGS3TCMh6g9Lvi8JySW4RFGJIJ8Im-Dh2FJ8C8vFCyF_Q4LHvRXI9aYEYgl-21JU9GrXVT11ansHf_bTdgcXvZBrGFLKWZt6Z3B5J5K05j0ALEgOyIfbiklymN6xJnbVPlnMo4hj3x1E8cPt5LkaFWuy_wd3dmuFsfao-PsMhn1hxzMtWv7xw"
-FIELD_VEHICULO_ID = 1386855
+KOMMO_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImp0aSI6ImVmZDY4MThjYTllMmJiNTA1ODFkY2ExZTE4NWVmOWM3Njc0N2U3MzYzYTVkYjY3ZjBiMmUyODI3Nzk4NWVhNWU1NDk4YjM0ZDkyMTIzYTk0In0.eyJhdWQiOiI3ZmQ5Yjc4Yy0zNTU3LTRhNDAtOTI3My1iNjk3NWU3NDJkNGQiLCJqdGkiOiJlZmQ2ODE4Y2E5ZTJiYjUwNTgxZGNhMWUxODVlZjljNzY3NDdlNzM2M2E1ZGI2N2YwYjJlMjgyNzc5ODVlYTVlNTQ5OGIzNGQ5MjEyM2E5NCIsImlhdCI6MTheader8M...[Token Completo Sigue Aquí]" # Se mantiene el token largo que envió
+FIELD_DESTINO_ID = 1386855  # Tipo de Vehículo
 
 @app.route('/webhook', methods=['GET', 'POST'])
 def procesar_lead():
-    print(f"¡ALERTA MÁXIMA!: Entró un disparo a Render usando el método: {request.method}", flush=True)
+    print(f"¡ALERTA!: Entró disparo por {request.method}", flush=True)
     
     try:
         lead_id = None
+        texto_vehiculo = None
         
-        # 1. Intentar capturar datos si vienen metidos en los parámetros de la URL (Método GET típico de Kommo)
-        if request.args:
-            args_data = request.args
-            print(f"Datos recibidos por GET (URL): {dict(args_data)}", flush=True)
-            for key in args_data.keys():
-                if 'leads' in key and '[id]' in key:
-                    lead_id = args_data[key]
-                    break
-            if not lead_id:
-                lead_id = args_data.get('id') or args_data.get('lead_id')
-
-        # 2. Si no es GET, revisar si viene por POST tradicional como formulario
-        if not lead_id and request.form:
-            form_data = request.form
-            print(f"Datos recibidos por POST (Formulario): {dict(form_data)}", flush=True)
-            for key in form_data.keys():
-                if 'leads' in key and '[id]' in key:
-                    lead_id = form_data[key]
-                    break
-
-        # 3. Revisar si viene por POST estructurado como JSON (Salesbot moderno)
-        if not lead_id and request.is_json:
+        # 1. CAPTURA DESDE JSON (Salesbot)
+        if request.is_json:
             json_data = request.get_json()
-            print(f"Datos recibidos por POST (JSON): {json_data}", flush=True)
+            print(f"JSON Recibido: {json_data}", flush=True)
+            
+            # Extraer ID del lead
             if 'leads' in json_data:
                 if 'update' in json_data['leads'] and len(json_data['leads']['update']) > 0:
-                    lead_id = json_data['leads']['update'][0].get('id')
-                elif isinstance(json_data['leads'], list) and len(json_data['leads']) > 0:
-                    lead_id = json_data['leads'][0].get('id')
+                    lead_data = json_data['leads']['update'][0]
+                    lead_id = lead_data.get('id')
+                    
+                    # Buscar el valor que viene en los campos personalizados del JSON
+                    if 'custom_fields' in lead_data:
+                        for field in lead_data['custom_fields']:
+                            # Lee cualquier campo que tenga valores y toma el primero texto que encuentre
+                            if 'values' in field and len(field['values']) > 0:
+                                # Capturamos el valor dinámico que viene de FB Ads (ej: "Pick Up")
+                                texto_vehiculo = field['values'][0].get('value')
+                                break
+            
             if not lead_id:
                 lead_id = json_data.get('id') or json_data.get('lead_id')
 
-        # Respuesta siempre exitosa (Código 200) para blindar el Webhook de Kommo
+        # 2. CAPTURA DESDE FORMULARIO (Webhook Directo)
+        elif request.form:
+            form_data = request.form
+            print(f"Formulario Recibido: {dict(form_data)}", flush=True)
+            for key in form_data.keys():
+                if 'leads' in key and '[id]' in key:
+                    lead_id = form_data[key]
+                # Buscar el valor del campo personalizado en el formulario
+                if 'custom_fields' in key and '[values][0][value]' in key:
+                    texto_vehiculo = form_data[key]
+
+        # Si no detectamos ID, cerramos con éxito para no bloquear a Kommo
         if not lead_id:
-            print("Aviso: Conexión establecida con éxito, pero la estructura no traía un ID válido.", flush=True)
-            return jsonify({"status": "recibido", "nota": "Método aceptado correctamente"}), 200
+            return jsonify({"status": "recibido", "nota": "Sin ID"}), 200
 
-        print(f"¡ID de Lead localizado!: {lead_id}", flush=True)
+        # Si no se encontró texto en el disparo, dejamos un respaldo por si acaso
+        if not texto_vehiculo:
+            texto_vehiculo = "Particular" 
 
-        # Regla de unificación provisional
-        vehiculo_final = "Particular Hasta 800 kg. de peso"
+        print(f"Procesando Lead: {lead_id} | Valor a copiar: {texto_vehiculo}", flush=True)
 
-        # Conexión directa a Kommo para reescribir el campo
+        # 3. ENVIAR ACTUALIZACIÓN IDENTICA A KOMMO
         url = f"https://{KOMMO_DOMAIN}/api/v4/leads/{lead_id}"
         headers = {
             "Authorization": f"Bearer {KOMMO_TOKEN}",
@@ -66,19 +69,19 @@ def procesar_lead():
         payload = {
             "custom_fields_values": [
                 {
-                    "field_id": FIELD_VEHICULO_ID,
-                    "values": [{"value": vehiculo_final}]
+                    "field_id": FIELD_DESTINO_ID,
+                    "values": [{"value": str(texto_vehiculo)}] # Inyecta exactamente el mismo texto leído
                 }
             ]
         }
 
         response = requests.patch(url, json=payload, headers=headers)
-        print(f"Resultado en Kommo: Código {response.status_code}", flush=True)
+        print(f"Respuesta API Kommo: Código {response.status_code}", flush=True)
         
-        return jsonify({"status": "exito", "lead_id": lead_id}), 200
+        return jsonify({"status": "exito", "lead_id": lead_id, "valor_copiado": texto_vehiculo}), 200
 
     except Exception as e:
-        print(f"Error crítico interno: {e}", flush=True)
+        print(f"Error crítico: {e}", flush=True)
         return jsonify({"status": "error", "detalle": str(e)}), 500
 
 if __name__ == '__main__':

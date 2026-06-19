@@ -9,13 +9,37 @@ KOMMO_TOKEN = os.environ.get("KOMMO_TOKEN")
 
 FIELD_ORIGEN_VEHICULO_ID = 1386779   # Origen Facebook
 FIELD_DESTINO_VEHICULO_ID = 1386855  # Destino Lead (Lista Desplegable)
-FIELD_DESTINO_NOMBRE_ID = 740646     # ¡OJO! REEMPLAZAR ESTE NÚMERO POR EL ID REAL DE "1er Nombre" EN CONTACTOS
+FIELD_DESTINO_NOMBRE_ID = 740646     # 1er Nombre (Contacto)
+
+# DICCIONARIO TRADUCTOR: Transforma el formato de Facebook al formato exacto de Kommo
+MAPEO_VEHICULOS = {
+    "rustico_ó_más_de_800_kg._de_peso": "Rustico ó Más de 800 kg. de peso",
+    "particular_hasta_800_kg._de_peso": "Particular Hasta 800 kg. de peso",
+    "pick_up": "Pick Up",
+    "panel": "Panel",
+    "motos": "Motos",
+    "buses": "Buses",
+    "carga_hasta_2_tm._de_capacidad": "Carga Hasta 2 TM. de capacidad",
+    "carga_más_de_2_y_hasta_5_tm._de_capacidad": "Carga Más de 2 y hasta 5 TM. de capacidad",
+    "carga_más_de_5_y_hasta_8_tm._de_capacidad": "Carga Más de 5 y hasta 8 TM. de capacidad",
+    "carga_más_de_8_y_hasta_12_tm._de_capacidad": "Carga Más de 8 y hasta 12 TM. de capacidad",
+    "carga_más_de_12_tm._de_capacidad": "Carga Más de 12 TM. de capacidad",
+    "taxi_-_placa_amarilla": "Taxi - Placa Amarilla"
+}
+
+def traducir_vehiculo(valor_fb):
+    if not valor_fb:
+        return None
+    # Estructura la entrada de Facebook para que coincida con nuestro mapa
+    clave = str(valor_fb).strip().lower().replace(" ", "_")
+    # Retorna el valor exacto para Kommo. Si no lo encuentra, pasa el original.
+    return MAPEO_VEHICULOS.get(clave, str(valor_fb))
 
 @app.route('/webhook', methods=['GET', 'POST'])
 def procesar_lead():
     print("\n=== 🚀 MOTOR DE SINCRONIZACIÓN INICIADO ===", flush=True)
     lead_id = None
-    texto_vehiculo = None
+    texto_vehiculo_bruto = None
     primer_nombre = None
     contact_id = None
     
@@ -30,15 +54,19 @@ def procesar_lead():
             for key, val in form_data.items():
                 if str(val) == str(FIELD_ORIGEN_VEHICULO_ID) and '[id]' in key:
                     llave_valor = key.replace('[id]', '[values][0][value]')
-                    texto_vehiculo = form_data.get(llave_valor)
+                    texto_vehiculo_bruto = form_data.get(llave_valor)
                     break
 
         if not lead_id:
             return jsonify({"status": "recibido", "nota": "Ping"}), 200
 
         print(f"Lead ID: {lead_id}", flush=True)
+        
+        # Procesar traducción del vehículo interceptado
+        texto_vehiculo = traducir_vehiculo(texto_vehiculo_bruto)
+        
         headers = {
-            "Authorization": f"Bearer {KOMMO_TOKEN.strip()}",
+            "Authorization": f"Bearer {KOMMO_TOKEN.strip()}" if KOMMO_TOKEN else "",
             "Content-Type": "application/json"
         }
 
@@ -53,20 +81,21 @@ def procesar_lead():
                 for field in lead_data['custom_fields_values']:
                     if str(field.get('field_id')) == str(FIELD_ORIGEN_VEHICULO_ID):
                         if field.get('values') and len(field['values']) > 0:
-                            texto_vehiculo = field['values'][0].get('value')
+                            val_bruto = field['values'][0].get('value')
+                            texto_vehiculo = traducir_vehiculo(val_bruto)
                             break
                             
             if '_embedded' in lead_data and 'contacts' in lead_data['_embedded'] and lead_data['_embedded']['contacts']:
                 contact_id = lead_data['_embedded']['contacts'][0].get('id')
         
-        # 3. FASE LEAD: Inyectar Vehículo
+        # 3. FASE LEAD: Inyectar Vehículo Estandarizado
         if texto_vehiculo:
-            print(f"Intentando clonar Vehículo -> '{texto_vehiculo}'", flush=True)
+            print(f"Intentando clonar Vehículo Traducido -> '{texto_vehiculo}'", flush=True)
             payload_v = {"custom_fields_values": [{"field_id": FIELD_DESTINO_VEHICULO_ID, "values": [{"value": str(texto_vehiculo)}]}]}
             resp_v = requests.patch(f"https://{KOMMO_DOMAIN}/api/v4/leads/{lead_id}", json=payload_v, headers=headers)
             
             if resp_v.status_code >= 400:
-                print(f"⚠️ ALERTA VEHÍCULO: Kommo rechazó '{texto_vehiculo}'. Seguramente esta opción NO EXISTE escrita exactamente así en tu lista desplegable de Kommo.", flush=True)
+                print(f"⚠️ ALERTA VEHÍCULO: Kommo rechazó '{texto_vehiculo}'.", flush=True)
             else:
                 print("✅ Vehículo guardado con éxito.", flush=True)
 
@@ -83,7 +112,7 @@ def procesar_lead():
                     resp_n = requests.patch(f"https://{KOMMO_DOMAIN}/api/v4/contacts/{contact_id}", json=payload_n, headers=headers)
                     
                     if resp_n.status_code >= 400:
-                        print(f"⚠️ ALERTA NOMBRE: Kommo rechazó el guardado. Confirma que el ID {FIELD_DESTINO_NOMBRE_ID} es realmente el campo de texto '1er Nombre' y no una lista.", flush=True)
+                        print(f"⚠️ ALERTA NOMBRE: Kommo rechazó el guardado del nombre.", flush=True)
                     else:
                         print("✅ 1er Nombre guardado con éxito.", flush=True)
 

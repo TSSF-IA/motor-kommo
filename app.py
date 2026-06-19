@@ -5,7 +5,8 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 KOMMO_DOMAIN = "asesoresintegrales03.kommo.com"
-KOMMO_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImp0aSI6ImVmZDY4MThjYTllMmJiNTA1ODFkY2ExZTE4NWVmOWM3Njc0N2U3MzYzYTVkYjY3ZjBiMmUyODI3Nzk4NWVhNWU1NDk4YjM0ZDkyMTIzYTk0In0.eyJhdWQiOiI3ZmQ5Yjc4Yy0zNTU3LTRhNDAtOTI3My1iNjk3NWU3NDJkNGQiLCJqdGkiOiJlZmQ2ODE4Y2E5ZTJiYjUwNTgxZGNhMWUxODVlZjljNzY3NDdlNzM2M2E1ZGI2N2YwYjJlMjgyNzc5ODVlYTVlNTQ5OGIzNGQ5MjEyM2E5NCIsImlhdCI6MTc4MTgwMzk1NiwibmJmIjoxNzgxODAzOTU2LCVleHAiOjE5MjQ5MDU2MDAsInN1YiI6Ijk1MDE4NjciLCJncmFudF90eXBlIjoiIiwiYWNjb3VudF9pZCI6MzExODA3OTEsImJhc2VfZG9tYWluIjoia29tbW8uY29tIiwidmVyc2lvbiI6Miwic2NvcGVzIjpbImNybSIsImZpbGVzIiwiZmlsZXNfZGVsZXRlIiwibm90aWZpY2F0aW9ucyIsInB1c2hfbm90aWZpY2F0aW9ucyIsInVzZXJzX2FjdGl2YXRlIiwidXNlcnNfYWRkIiwidXNlcnNfZGVhY3RpdmF0ZSJdLCJoYXNoX3V1aWQiOiJlMzNhMmM2NC03YTllLTQ1NzYtODQ1Yy1kZjBlODQyMmUxNmYiLCJhcGlfZG9tYWluIjoiYXBpLWcua29tbW8uY29tIn0.H0BJhLb8ofc9vVDM_Q7IwkfhgQ2RdBbZbbpZHHyFWqdZsVZpnoF7VqRe0tm_CpkTgQZdgu2C5uWo3fPZsQJDwU0pY1IQi86TQJiDyhVN9aHZUSakY6RznhPz9t_O1hOqgR8h99dAfhr-a0oDUSLPsxd7EPV4hQNSQwGS3TCMh6g9Lvi8JySW4RFGJIJ8Im-Dh2FJ8C8vFCyF_Q4LHvRXI9aYEYgl-21JU9GrXVT11ansHf_bTdgcXvZBrGFLKWZt6Z3B5J5K05j0ALEgOyIfbiklymN6xJnbVPlnMo4hj3x1E8cPt5LkaFWuy_wd3dmuFsfao-PsMhn1hxzMtWv7xw"
+# El motor lee la llave directamente desde el sistema de Render, garantizando cero errores de copia
+KOMMO_TOKEN = os.environ.get("KOMMO_TOKEN")
 
 FIELD_ORIGEN_VEHICULO_ID = 1386779   # DATOS DE VEHICULOS (Origen)
 FIELD_DESTINO_VEHICULO_ID = 1386855  # Tipo de Vehículo (Destino)
@@ -19,18 +20,18 @@ def procesar_lead():
     primer_nombre = None
     
     try:
-        # 1. Extracción basada en la estructura del formulario real de Kommo
+        # 1. Extracción del ID desde el formulario (Soporta estructuras add y update)
         if request.form:
             form_data = request.form
             print(f"Formulario recibido: {dict(form_data)}", flush=True)
             
-            # Buscar ID del Lead
+            # Localizar ID del Lead
             for key, val in form_data.items():
                 if 'leads' in key and '[id]' in key and 'custom_fields' not in key and 'tags' not in key:
                     lead_id = val
                     break
             
-            # Buscar valor del vehículo mapeando las llaves del formulario de Kommo
+            # Localizar vehículo si viene en el cuerpo del disparo
             for key, val in form_data.items():
                 if str(val) == str(FIELD_ORIGEN_VEHICULO_ID) and '[id]' in key:
                     llave_valor = key.replace('[id]', '[values][0][value]')
@@ -42,19 +43,24 @@ def procesar_lead():
             return jsonify({"status": "recibido", "nota": "Ping sin datos de proceso"}), 200
 
         print(f"ID del Lead detectado: {lead_id}", flush=True)
+        
+        if not KOMMO_TOKEN:
+            print("⚠️ Error Crítico: La variable de entorno KOMMO_TOKEN no está configurada en Render.", flush=True)
+            return jsonify({"status": "error_config", "detalle": "Falta el Token en Render"}), 500
+
         headers = {
-            "Authorization": f"Bearer {KOMMO_TOKEN}",
+            "Authorization": f"Bearer {KOMMO_TOKEN.strip()}",
             "Content-Type": "application/json"
         }
 
-        # 2. Conexión mediante la API para extraer el contacto vinculado
+        # 2. Conexión de respaldo mediante la API para extraer el contacto vinculado
         url_lead = f"https://{KOMMO_DOMAIN}/api/v4/leads/{lead_id}?with=contacts"
         lead_resp = requests.get(url_lead, headers=headers)
         
         if lead_resp.status_code == 200:
             lead_data = lead_resp.json()
             
-            # Si el webhook no trajo el vehículo, se obtiene por API de respaldo
+            # Si el webhook no trajo el vehículo (típico en eventos 'add'), se obtiene por API
             if not texto_vehiculo and 'custom_fields_values' in lead_data and lead_data['custom_fields_values']:
                 for field in lead_data['custom_fields_values']:
                     if str(field.get('field_id')) == str(FIELD_ORIGEN_VEHICULO_ID):
@@ -67,7 +73,7 @@ def procesar_lead():
                 contact_id = lead_data['_embedded']['contacts'][0].get('id')
                 
                 if contact_id:
-                    # Consultar los datos nativos del contacto para extraer el nombre
+                    # Obtener los datos nativos del contacto para extraer el nombre
                     url_contact = f"https://{KOMMO_DOMAIN}/api/v4/contacts/{contact_id}"
                     contact_resp = requests.get(url_contact, headers=headers)
                     if contact_resp.status_code == 200:
@@ -80,7 +86,7 @@ def procesar_lead():
         else:
             print(f"Error de autenticación o consulta API de Lead ({lead_resp.status_code}): {lead_resp.text}", flush=True)
 
-        # 3. Empaquetar y ejecutar actualización cruzada en Kommo
+        # 3. Empaquetar y ejecutar actualización en un solo movimiento
         campos_a_actualizar = []
         if texto_vehiculo:
             campos_a_actualizar.append({
@@ -106,7 +112,7 @@ def procesar_lead():
                 print(f"Error al guardar campos ({patch_resp.status_code}): {patch_resp.text}", flush=True)
                 return jsonify({"status": "error_guardado", "detalle": patch_resp.text}), 400
         else:
-            print("No se encontraron datos nuevos para procesar en esta ejecución.", flush=True)
+            print("No se encontraron datos nuevos para modificar en esta ejecución.", flush=True)
             return jsonify({"status": "sin_cambios"}), 200
 
     except Exception as e:

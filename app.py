@@ -45,41 +45,60 @@ def procesar_lead():
     texto_vehiculo_bruto = None
     primer_nombre = None
     contact_id = None
+    mensaje_texto = ""
     
     try:
         if request.form:
             form_data = request.form
-            print(f"📡 Disparo recibido de Kommo...", flush=True)
+            print(f"📡 Disparo crudo recibido de Kommo: {dict(form_data)}", flush=True)
             
-            # 1. Buscar ID del Lead (Detecta tanto Leads nuevos como mensajes de WhatsApp)
+            # 1. Extractor Universal (Soporta leads, message y messages en plural)
             for key, val in form_data.items():
-                if 'leads' in key and '[id]' in key and 'custom_fields' not in key and 'tags' not in key:
+                if ('leads' in key or 'message' in key) and '[id]' in key and 'custom_fields' not in key and 'tags' not in key:
                     lead_id = val
-                    break
-                if 'message[add]' in key and '[element_id]' in key:
+                elif '[element_id]' in key:
                     lead_id = val
-                    break
+                
+                # Capturar el texto del chat directo desde el cuerpo del Webhook
+                if '[text]' in key:
+                    mensaje_texto = val
             
-            # 2. Intentar buscar Vehículo por el formulario tradicional
+            # 2. Buscar Vehículo por el formulario tradicional si viene mapeado directamente
             for key, val in form_data.items():
                 if str(val) == str(FIELD_ORIGEN_VEHICULO_ID) and '[id]' in key:
                     llave_valor = key.replace('[id]', '[values][0][value]')
                     texto_vehiculo_bruto = form_data.get(llave_valor)
                     break
 
+            # 3. Escáner Láser sobre el mensaje de chat interceptado
+            if mensaje_texto and ("Tipo de Vehículo a Cotizar:" in mensaje_texto or "Completé el formulario" in mensaje_texto):
+                print("📩 ¡Texto de formulario detectado en el chat! Procesando escáner...", flush=True)
+                
+                # Extraer Vehículo
+                match_v = re.search(r"Tipo de Veh[íi]culo a Cotizar:\s*(.+)", str(mensaje_texto))
+                if match_v:
+                    texto_vehiculo_bruto = match_v.group(1).strip()
+                    print(f"Láser detectó vehículo en chat: {texto_vehiculo_bruto}", flush=True)
+                    
+                # Extraer Nombre
+                match_n = re.search(r"Full name:\s*(.+)", str(mensaje_texto))
+                if match_n:
+                    primer_nombre = match_n.group(1).strip().split()[0].capitalize()
+                    print(f"Láser detectó nombre en chat: {primer_nombre}", flush=True)
+
         if not lead_id:
+            print("Aviso: Disparo recibido sin ID de lead procesable.", flush=True)
             return jsonify({"status": "recibido", "nota": "Ping vacío"}), 200
 
-        print(f"🎯 Lead ID Detectado: {lead_id}", flush=True)
-        
+        print(f"🎯 Lead ID Activo: {lead_id}", flush=True)
         headers = {
             "Authorization": f"Bearer {KOMMO_TOKEN.strip()}" if KOMMO_TOKEN else "",
             "Content-Type": "application/json"
         }
 
-        # 3. LECTURA DE HISTORIAL: Si el webhook no trajo el vehículo, vamos a buscarlo al chat
-        if not texto_vehiculo_bruto:
-            print("🔍 Activando lectura profunda del historial de chat del Lead...", flush=True)
+        # 4. Canal de Respaldo Histórico (Si faltan datos en el disparo directo)
+        if not texto_vehiculo_bruto or not primer_nombre:
+            print("🔍 Buscando datos adicionales en el historial de notas del Lead...", flush=True)
             url_notes = f"https://{KOMMO_DOMAIN}/api/v4/leads/{lead_id}/notes"
             notes_resp = requests.get(url_notes, headers=headers)
             
@@ -87,27 +106,23 @@ def procesar_lead():
                 notes_data = notes_resp.json()
                 if '_embedded' in notes_data and 'notes' in notes_data['_embedded']:
                     for note in notes_data['_embedded']['notes']:
-                        # Extraemos el texto de la nota/chat
                         texto_nota = note.get('params', {}).get('text', '')
-                        
                         if texto_nota and "Tipo de Vehículo a Cotizar:" in texto_nota:
-                            print("✅ ¡Mensaje de WhatsApp interceptado!", flush=True)
-                            
-                            # Escáner Láser para Vehículo
+                            print("✅ ¡Mensaje localizado en el historial de notas!", flush=True)
                             match_v = re.search(r"Tipo de Veh[íi]culo a Cotizar:\s*(.+)", str(texto_nota))
-                            if match_v:
+                            if match_v and not texto_vehiculo_bruto:
                                 texto_vehiculo_bruto = match_v.group(1).strip()
-                                
-                            # Escáner Láser para Nombre
+                            
                             match_n = re.search(r"Full name:\s*(.+)", str(texto_nota))
-                            if match_n:
-                                # Toma solo la primera palabra y la capitaliza
+                            if match_n and not primer_nombre:
                                 primer_nombre = match_n.group(1).strip().split()[0].capitalize()
-                            break # Salimos del ciclo al encontrar el primer mensaje válido
+                            break
+            elif notes_resp.status_code == 204:
+                print("ℹ️ El historial de notas está vacío en este milisegundo (204 No Content).", flush=True)
             else:
-                print(f"⚠️ Error al leer historial: {notes_resp.text}", flush=True)
+                print(f"⚠️ Nota de API (Código {notes_resp.status_code}): {notes_resp.text}", flush=True)
 
-        # 4. Traducción y Conexión Estructural
+        # 5. Traducción final del Vehículo y localización de Contacto
         texto_vehiculo_limpio = traducir_vehiculo(texto_vehiculo_bruto)
         
         url_lead = f"https://{KOMMO_DOMAIN}/api/v4/leads/{lead_id}?with=contacts"
@@ -115,7 +130,6 @@ def procesar_lead():
         
         if lead_resp.status_code == 200:
             lead_data = lead_resp.json()
-            # Respaldo final si no se encontró en el chat
             if not texto_vehiculo_limpio and 'custom_fields_values' in lead_data and lead_data['custom_fields_values']:
                 for field in lead_data['custom_fields_values']:
                     if str(field.get('field_id')) == str(FIELD_ORIGEN_VEHICULO_ID):
@@ -127,7 +141,7 @@ def procesar_lead():
             if '_embedded' in lead_data and 'contacts' in lead_data['_embedded'] and lead_data['_embedded']['contacts']:
                 contact_id = lead_data['_embedded']['contacts'][0].get('id')
 
-        # 5. INYECCIÓN EN LA TARJETA DEL LEAD (Vehículo y Limpieza)
+        # 6. Guardado en la tarjeta del Lead (Lista desplegable + Texto limpio)
         if texto_vehiculo_limpio:
             payload_v = {
                 "custom_fields_values": [
@@ -136,13 +150,12 @@ def procesar_lead():
                 ]
             }
             requests.patch(f"https://{KOMMO_DOMAIN}/api/v4/leads/{lead_id}", json=payload_v, headers=headers)
-            print(f"✅ Campos de vehículo actualizados: '{texto_vehiculo_limpio}'", flush=True)
+            print(f"✅ Campos de vehículo actualizados con éxito: '{texto_vehiculo_limpio}'", flush=True)
 
-        # 6. INYECCIÓN EN EL CONTACTO (Nombre)
+        # 7. Guardado en el Contacto (Nombre de pila limpio)
         if contact_id:
             contact_resp = requests.get(f"https://{KOMMO_DOMAIN}/api/v4/contacts/{contact_id}", headers=headers)
             if contact_resp.status_code == 200:
-                # Si el láser no encontró el nombre en el chat, busca el del perfil de WhatsApp
                 if not primer_nombre:
                     nombre_completo = contact_resp.json().get('name', '')
                     if nombre_completo and nombre_completo.strip() and nombre_completo.lower() != "contacto":
@@ -151,7 +164,7 @@ def procesar_lead():
                 if primer_nombre:
                     payload_n = {"custom_fields_values": [{"field_id": FIELD_DESTINO_NOMBRE_ID, "values": [{"value": str(primer_nombre)}]}]}
                     requests.patch(f"https://{KOMMO_DOMAIN}/api/v4/contacts/{contact_id}", json=payload_n, headers=headers)
-                    print(f"✅ 1er Nombre guardado: '{primer_nombre}'", flush=True)
+                    print(f"✅ 1er Nombre guardado con éxito: '{primer_nombre}'", flush=True)
 
         return jsonify({"status": "procesado", "lead_id": lead_id}), 200
     except Exception as e:
